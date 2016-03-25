@@ -3,7 +3,7 @@ PATH
   specs:
     phony_rails (0.13.0)
       activesupport (>= 3.0)
-      czhc-phony (~> 2.15.15)
+      czhc-phony (~> 2.15.16)
 
 GEM
   remote: https://rubygems.org/
@@ -32,7 +32,7 @@ GEM
       term-ansicolor (~> 1.3)
       thor (~> 0.19.1)
       tins (~> 1.6.0)
-    czhc-phony (2.15.15)
+    czhc-phony (2.15.16)
     diff-lcs (1.2.5)
     docile (1.1.5)
     ffi (1.9.10)
