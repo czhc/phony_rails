@@ -1,4 +1,5 @@
-# encoding: utf-8
+# frozen_string_literal: true
+
 require 'spec_helper'
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -53,6 +54,11 @@ ActiveRecord::Schema.define do
 
   create_table :invalid_country_code_helpful_homes do |table|
     table.column :phone_number, :string
+  end
+
+  create_table :symbolizable_helpful_homes do |table|
+    table.column :phone_number, :string
+    table.column :phone_number_country_code, :string
   end
 end
 
@@ -132,21 +138,51 @@ class InvalidCountryCodeHelpfulHome < ActiveRecord::Base
     '--'
   end
 end
+
+#--------------------
+class SymbolizableHelpfulHome < ActiveRecord::Base
+  attr_accessor :phone_number, :phone_number_country_code
+  validates_plausible_phone :phone_number, country_code: :phone_number_country_code
+end
+
+#--------------------
+class NoModelMethod < HelpfulHome
+  attr_accessor :phone_number
+  validates_plausible_phone :phone_number, country_code: :nonexistent_method
+end
+
+#--------------------
+class MessageOptionUndefinedInModel < HelpfulHome
+  attr_accessor :phone_number
+  validates_plausible_phone :phone_number, message: :email
+end
+
+#--------------------
+class MessageOptionSameAsModelMethod < HelpfulHome
+  attr_accessor :phone_number
+  validates_plausible_phone :phone_number, message: :email
+
+  def email
+    'user@example.com'
+  end
+end
 #-----------------------------------------------------------------------------------------------------------------------
 # Tests
 #-----------------------------------------------------------------------------------------------------------------------
 
 I18n.locale = :en
-VALID_NUMBER = '1 555 555 5555'.freeze
-NORMALIZABLE_NUMBER = '555 555 5555'.freeze
-AUSTRALIAN_NUMBER_WITH_COUNTRY_CODE = '61390133997'.freeze
-POLISH_NUMBER_WITH_COUNTRY_CODE = '48600600600'.freeze
-FORMATTED_AUSTRALIAN_NUMBER_WITH_COUNTRY_CODE = '+61 390133997'.freeze
-FRENCH_NUMBER_WITH_COUNTRY_CODE = '33627899541'.freeze
-FORMATTED_FRENCH_NUMBER_WITH_COUNTRY_CODE = '+33 627899541'.freeze
-INVALID_NUMBER = '123456789 123456789 123456789 123456789'.freeze
-NOT_A_NUMBER = 'HAHA'.freeze
-JAPAN_COUNTRY = 'jp'.freeze
+VALID_NUMBER = '1 555 555 5555'
+VALID_NUMBER_WITH_EXTENSION = '1 555 555 5555 x123'
+VALID_NUMBER_WITH_INVALID_EXTENSION = '1 555 555 5555 x1a'
+NORMALIZABLE_NUMBER = '555 555 5555'
+AUSTRALIAN_NUMBER_WITH_COUNTRY_CODE = '61390133997'
+POLISH_NUMBER_WITH_COUNTRY_CODE = '48600600600'
+FORMATTED_AUSTRALIAN_NUMBER_WITH_COUNTRY_CODE = '+61 390133997'
+FRENCH_NUMBER_WITH_COUNTRY_CODE = '33627899541'
+FORMATTED_FRENCH_NUMBER_WITH_COUNTRY_CODE = '+33 627899541'
+INVALID_NUMBER = '123456789 123456789 123456789 123456789'
+NOT_A_NUMBER = 'HAHA'
+JAPAN_COUNTRY = 'jp'
 
 #-----------------------------------------------------------------------------------------------------------------------
 describe PhonyPlausibleValidator do
@@ -165,8 +201,19 @@ describe PhonyPlausibleValidator do
       expect(@home).to be_valid
     end
 
+    it 'should validate a valid number with extension' do
+      @home.phone_number = VALID_NUMBER_WITH_EXTENSION
+      expect(@home).to be_valid
+    end
+
     it 'should invalidate an invalid number' do
       @home.phone_number = INVALID_NUMBER
+      expect(@home).to_not be_valid
+      expect(@home.errors.messages).to include(phone_number: ['is an invalid number'])
+    end
+
+    it 'should invalidate an valid number with invalid extension' do
+      @home.phone_number = VALID_NUMBER_WITH_INVALID_EXTENSION
       expect(@home).to_not be_valid
       expect(@home.errors.messages).to include(phone_number: ['is an invalid number'])
     end
@@ -197,7 +244,7 @@ describe PhonyPlausibleValidator do
       I18n.with_locale(:fr) do
         @home.phone_number = INVALID_NUMBER
         @home.valid?
-        expect(@home.errors.messages).to include(phone_number: ["est un numéro invalide"])
+        expect(@home.errors.messages).to include(phone_number: ['est un numéro invalide'])
       end
     end
 
@@ -205,7 +252,7 @@ describe PhonyPlausibleValidator do
       I18n.with_locale(:ja) do
         @home.phone_number = INVALID_NUMBER
         @home.valid?
-        expect(@home.errors.messages).to include(phone_number: ["は正しい電話番号ではありません"])
+        expect(@home.errors.messages).to include(phone_number: ['は正しい電話番号ではありません'])
       end
     end
 
@@ -213,7 +260,7 @@ describe PhonyPlausibleValidator do
       I18n.with_locale(:km) do
         @home.phone_number = INVALID_NUMBER
         @home.valid?
-        expect(@home.errors.messages).to include(phone_number: ["គឺជាលេខមិនត្រឹមត្រូវ"])
+        expect(@home.errors.messages).to include(phone_number: ['គឺជាលេខមិនត្រឹមត្រូវ'])
       end
     end
 
@@ -221,7 +268,7 @@ describe PhonyPlausibleValidator do
       I18n.with_locale(:uk) do
         @home.phone_number = INVALID_NUMBER
         @home.valid?
-        expect(@home.errors.messages).to include(phone_number: ["є недійсним номером"])
+        expect(@home.errors.messages).to include(phone_number: ['є недійсним номером'])
       end
     end
 
@@ -229,7 +276,7 @@ describe PhonyPlausibleValidator do
       I18n.with_locale(:ru) do
         @home.phone_number = INVALID_NUMBER
         @home.valid?
-        expect(@home.errors.messages).to include(phone_number: ["является недействительным номером"])
+        expect(@home.errors.messages).to include(phone_number: ['является недействительным номером'])
       end
     end
   end
@@ -290,7 +337,13 @@ describe ActiveModel::Validations::HelperMethods do
         @home = OptionalHelpfulHome.new
       end
 
+      it 'should validate an nil number' do
+        @home.phone_number = nil
+        expect(@home).to be_valid
+      end
+
       it 'should validate an empty number' do
+        @home.phone_number = ''
         expect(@home).to be_valid
       end
 
@@ -500,6 +553,69 @@ describe ActiveModel::Validations::HelperMethods do
         expect do
           @home.valid?
         end.to_not raise_error
+      end
+    end
+
+    #--------------------
+    context 'when a country code is passed as a symbol' do
+      before(:each) do
+        @home = SymbolizableHelpfulHome.new
+      end
+
+      it 'should validate an empty number' do
+        expect(@home).to be_valid
+      end
+
+      it 'should validate a valid number with the right country code' do
+        @home.phone_number = POLISH_NUMBER_WITH_COUNTRY_CODE
+        @home.phone_number_country_code = 'PL'
+        expect(@home).to be_valid
+      end
+
+      it 'should invalidate a valid number with the wrong country code' do
+        @home.phone_number = FRENCH_NUMBER_WITH_COUNTRY_CODE
+        @home.phone_number_country_code = 'PL'
+        expect(@home).to_not be_valid
+        expect(@home.errors.messages).to include(phone_number: ['is an invalid number'])
+      end
+
+      it 'should invalidate a valid number without a country code' do
+        @home.phone_number = VALID_NUMBER
+        @home.phone_number_country_code = 'PL'
+        expect(@home).to_not be_valid
+        expect(@home.errors.messages).to include(phone_number: ['is an invalid number'])
+      end
+    end
+
+    #--------------------
+    context 'when a nonexistent method is passed as a symbol to an option other than message' do
+      it 'raises NoMethodError' do
+        @home = NoModelMethod.new
+        @home.phone_number = FRENCH_NUMBER_WITH_COUNTRY_CODE
+
+        expect { @home.save }.to raise_error(NoMethodError)
+      end
+    end
+
+    #--------------------
+    context 'when a nonexistent method is passed as a symbol to the message option' do
+      it 'does not raise an error' do
+        @home = MessageOptionUndefinedInModel.new
+        @home.phone_number = INVALID_NUMBER
+
+        expect { @home.save }.to_not raise_error
+      end
+    end
+
+    #--------------------
+    context 'when an existing Model method is passed as a symbol to the message option' do
+      it 'does not use the Model method' do
+        @home = MessageOptionSameAsModelMethod.new
+        @home.phone_number = INVALID_NUMBER
+
+        expect(@home).to_not receive(:email)
+
+        @home.save
       end
     end
   end

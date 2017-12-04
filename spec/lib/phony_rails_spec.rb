@@ -1,28 +1,33 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
 describe PhonyRails do
+  EXT_PREFIXES = %w[ext ex x xt # :].freeze
+
   it 'should not pollute the global namespace with a Country class' do
     should_not be_const_defined 'Country'
   end
 
   describe 'phony_format String extension' do
     describe 'the phony_formatted method' do
-      it 'should not modify the original options Hash' do
+      it 'does not modify the original options Hash' do
         options = { normalize: :NL, format: :international }
         '0101234123'.phony_formatted(options)
         expect(options).to eql(normalize: :NL, format: :international)
       end
 
       describe 'with the bang!' do
-        it 'should change the String using the bang method' do
-          s = '0101234123'
+        it 'changes the String using the bang method' do
+          # Mutable String
+          s = +'0101234123' rescue '0101234123' # rubocop:disable Style/RescueModifier
           expect(s.phony_formatted!(normalize: :NL, format: :international)).to eql('+31 10 123 4123')
           expect(s).to eql('+31 10 123 4123')
         end
       end
 
       describe 'with strict option' do
-        it 'should return nil with non plausible number' do
+        it 'returns nil with non plausible number' do
           number = '+319090' # not valid
           expect(Phony.plausible?(number)).to be false
           expect(number.phony_formatted(strict: true)).to eql(nil)
@@ -75,8 +80,21 @@ describe PhonyRails do
         end
 
         context 'when raise is false (default)' do
-          it 'should return original String on exception' do
+          it 'returns original String on exception' do
             expect('8887716095'.phony_formatted(format: :international)).to eq('8887716095')
+          end
+        end
+      end
+
+      describe 'with extensions' do
+        EXT_PREFIXES.each do |prefix|
+          it "should format number with #{prefix} extension" do
+            expect("+319090#{prefix}123".phony_formatted(strict: true)).to eql(nil)
+            expect("101234123#{prefix}123".phony_formatted(normalize: :NL)).to eql('010 123 4123 x123')
+            expect("101234123#{prefix}123".phony_formatted(normalize: :NL, format: :international)).to eql('+31 10 123 4123 x123')
+            expect("31101234123#{prefix}123".phony_formatted(normalize: :NL)).to eql('010 123 4123 x123')
+            expect("8887716095#{prefix}123".phony_formatted(format: :international, normalize: 'US', raise: true)).to eq('+1 (888) 771-6095 x123')
+            expect("+12145551212#{prefix}123".phony_formatted).to eq('(214) 555-1212 x123')
           end
         end
       end
@@ -194,6 +212,12 @@ describe PhonyRails do
           expect(normal.phone_number).to eq('HAHA')
           expect(normal.errors.messages).to include(phone_number: ['is an invalid number'])
         end
+
+        it 'should pass Github issue #170' do
+          phone = '(+49) 175 123 4567'
+          phone = PhonyRails.normalize_number(phone)
+          expect(phone).to eq('+491751234567')
+        end
       end
 
       it 'should not change original String' do
@@ -297,6 +321,30 @@ describe PhonyRails do
       end
     end
 
+    context 'number with an extension' do
+      EXT_PREFIXES.each do |prefix|
+        it "should handle some edge cases (with country_code) and #{prefix} extension" do
+          expect(PhonyRails.normalize_number("some nasty stuff in this +31 number 10-1234123 string #{prefix}123", country_code: 'NL')).to eql('+31101234123 x123')
+          expect(PhonyRails.normalize_number("070-4157134#{prefix}123", country_code: 'NL')).to eql('+31704157134 x123')
+          expect(PhonyRails.normalize_number("0031-70-4157134#{prefix}123", country_code: 'NL')).to eql('+31704157134 x123')
+          expect(PhonyRails.normalize_number("+31-70-4157134#{prefix}123", country_code: 'NL')).to eql('+31704157134 x123')
+          expect(PhonyRails.normalize_number("0322-69497#{prefix}123", country_code: 'BE')).to eql('+3232269497 x123')
+          expect(PhonyRails.normalize_number("+32 3 226 94 97#{prefix}123", country_code: 'BE')).to eql('+3232269497 x123')
+          expect(PhonyRails.normalize_number("0450 764 000#{prefix}123", country_code: 'AU')).to eql('+61450764000 x123')
+        end
+
+        it "should handle some edge cases (with default_country_code) and #{prefix}" do
+          expect(PhonyRails.normalize_number("some nasty stuff in this +31 number 10-1234123 string #{prefix}123", country_code: 'NL')).to eql('+31101234123 x123')
+          expect(PhonyRails.normalize_number("070-4157134#{prefix}123", default_country_code: 'NL')).to eql('+31704157134 x123')
+          expect(PhonyRails.normalize_number("0031-70-4157134#{prefix}123", default_country_code: 'NL')).to eql('+31704157134 x123')
+          expect(PhonyRails.normalize_number("+31-70-4157134#{prefix}123", default_country_code: 'NL')).to eql('+31704157134 x123')
+          expect(PhonyRails.normalize_number("0322-69497#{prefix}123", default_country_code: 'BE')).to eql('+3232269497 x123')
+          expect(PhonyRails.normalize_number("+32 3 226 94 97#{prefix}123", default_country_code: 'BE')).to eql('+3232269497 x123')
+          expect(PhonyRails.normalize_number("0450 764 000#{prefix}123", default_country_code: 'AU')).to eql('+61450764000 x123')
+        end
+      end
+    end
+
     it 'should handle some edge cases (with country_code)' do
       expect(PhonyRails.normalize_number('some nasty stuff in this +31 number 10-1234123 string', country_code: 'NL')).to eql('+31101234123')
       expect(PhonyRails.normalize_number('070-4157134', country_code: 'NL')).to eql('+31704157134')
@@ -320,6 +368,29 @@ describe PhonyRails do
     it 'should normalize even an implausible number' do
       expect(PhonyRails.normalize_number('01')).to eql('1')
     end
+
+    context 'with default_country_code set' do
+      before { PhonyRails.default_country_code = 'NL' }
+      after { PhonyRails.default_country_code = nil }
+
+      it 'normalize using the default' do
+        expect(PhonyRails.normalize_number('010-1234123')).to eql('+31101234123')
+        expect(PhonyRails.normalize_number('010-1234123')).to eql('+31101234123')
+        expect(PhonyRails.normalize_number('070-4157134')).to eql('+31704157134')
+        expect(PhonyRails.normalize_number('0031-70-4157134')).to eql('+31704157134')
+        expect(PhonyRails.normalize_number('+31-70-4157134')).to eql('+31704157134')
+      end
+
+      it 'allows default_country_code to be overridden' do
+        expect(PhonyRails.normalize_number('0322-69497', country_code: 'BE')).to eql('+3232269497')
+        expect(PhonyRails.normalize_number('+32 3 226 94 97', country_code: 'BE')).to eql('+3232269497')
+        expect(PhonyRails.normalize_number('0450 764 000', country_code: 'AU')).to eql('+61450764000')
+
+        expect(PhonyRails.normalize_number('0322-69497', default_country_code: 'BE')).to eql('+3232269497')
+        expect(PhonyRails.normalize_number('+32 3 226 94 97', default_country_code: 'BE')).to eql('+3232269497')
+        expect(PhonyRails.normalize_number('0450 764 000', default_country_code: 'AU')).to eql('+61450764000')
+      end
+    end
   end
 
   describe 'PhonyRails.plausible_number?' do
@@ -331,41 +402,100 @@ describe PhonyRails do
     let(:empty_number) { '' }
     let(:nil_number) { nil }
 
-    it 'should return true for a valid number' do
+    it 'returns true for a valid number' do
       is_expected.to be_plausible_number valid_number, country_code: 'US'
     end
 
-    it 'should return false for an invalid number' do
+    it 'returns false for an invalid number' do
       is_expected.not_to be_plausible_number invalid_number, country_code: 'US'
     end
 
-    it 'should return true for a normalizable number' do
+    it 'returns true for a normalizable number' do
       is_expected.to be_plausible_number normalizable_number, country_code: 'US'
     end
 
-    it 'should return false for a valid number with the wrong country code' do
+    it 'returns false for a valid number with the wrong country code' do
       is_expected.not_to be_plausible_number normalizable_number, country_code: 'FR'
     end
 
-    it 'should return true for a well formatted valid number' do
+    it 'returns true for a well formatted valid number' do
       is_expected.to be_plausible_number formatted_french_number_with_country_code, country_code: 'FR'
     end
 
-    it 'should return false for an empty number' do
+    it 'returns false for an empty number' do
       is_expected.not_to be_plausible_number empty_number, country_code: 'US'
     end
 
-    it 'should return false for a nil number' do
+    it 'returns false for a nil number' do
       is_expected.not_to be_plausible_number nil_number, country_code: 'US'
     end
 
-    it 'should return false when no country code is supplied' do
+    it 'returns false when no country code is supplied' do
       is_expected.not_to be_plausible_number normalizable_number
     end
 
     it 'returns false if something goes wrong' do
       expect(Phony).to receive(:plausible?).twice.and_raise('unexpected error')
       is_expected.not_to be_plausible_number normalizable_number, country_code: 'US'
+    end
+
+    context 'with default_country_code set' do
+      before { PhonyRails.default_country_code = 'FR' }
+      after { PhonyRails.default_country_code = nil }
+
+      it 'uses the default' do
+        is_expected.not_to be_plausible_number normalizable_number
+        is_expected.to be_plausible_number formatted_french_number_with_country_code
+      end
+
+      it 'allows default_country_code to be overridden' do
+        is_expected.not_to be_plausible_number empty_number, country_code: 'US'
+        is_expected.not_to be_plausible_number nil_number, country_code: 'US'
+      end
+    end
+  end
+
+  describe 'PhonyRails.default_country' do
+    before { PhonyRails.default_country_code = 'US' }
+    after { PhonyRails.default_country_code = nil }
+
+    it 'can set a global default country code' do
+      expect(PhonyRails.default_country_code). to eq 'US'
+    end
+
+    it 'can set a global default country code' do
+      PhonyRails.default_country_number = '1'
+      expect(PhonyRails.default_country_number).to eq '1'
+    end
+
+    it 'default country code affects default country number' do
+      expect(PhonyRails.default_country_number).to eq '1'
+    end
+  end
+
+  describe 'PhonyRails#extract_extension' do
+    it 'returns [nil, nil] on nil input' do
+      expect(PhonyRails.extract_extension(nil)).to eq [nil, nil]
+    end
+
+    it 'returns [number, nil] when number does not have an extension' do
+      expect(PhonyRails.extract_extension('123456789')).to eq ['123456789', nil]
+    end
+
+    EXT_PREFIXES.each do |prefix|
+      it "returns [number, ext] when number has a #{prefix} extension" do
+        expect(PhonyRails.extract_extension("123456789#{prefix}123")).to eq %w[123456789 123]
+      end
+    end
+  end
+
+  describe 'PhonyRails#format_extension' do
+    it 'returns just number if no extension' do
+      expect(PhonyRails.format_extension('+123456789', nil)).to eq '+123456789'
+    end
+
+    it 'returns number with extension if extension exists' do
+      expect(PhonyRails.format_extension('+123456789', '123')).to eq '+123456789 x123'
     end
   end
 
@@ -425,7 +555,7 @@ describe PhonyRails do
       end
 
       it 'should accept supported options' do
-        options = [:country_number, :default_country_number, :country_code, :default_country_code, :add_plus, :as, :enforce_record_country]
+        options = %i[country_number default_country_number country_code default_country_code add_plus as enforce_record_country]
         options.each do |option_sym|
           expect(lambda do
             dummy_klass.phony_normalize(:phone_number, option_sym => false)
@@ -442,12 +572,12 @@ describe PhonyRails do
 
     describe 'using model#phony_normalized_method' do
       # Following examples have complete number (with country code!)
-      it 'should return a normalized version of an attribute' do
+      it 'returns a normalized version of an attribute' do
         model = model_klass.new(phone_attribute: '+31-(0)10-1234123')
         expect(model.normalized_phone_attribute).to eql('+31101234123')
       end
 
-      it 'should return a normalized version of a method' do
+      it 'returnsa normalized version of a method' do
         model = model_klass.new(phone_method: '+31-(0)10-1234123')
         expect(model.normalized_phone_method).to eql('+31101234123')
       end
@@ -499,6 +629,11 @@ describe PhonyRails do
         model.country_code = nil
         expect(model.normalized_phone1_method(country_code: nil)).to eql('+49308612906')
       end
+
+      it 'should accept a symbol when setting country_code options' do
+        model = model_klass.new(symboled_phone_method: '02031234567', country_code_attribute: 'GB')
+        expect(model.normalized_symboled_phone_method).to eql('+442031234567')
+      end
     end
 
     describe 'using model#phony_normalize' do
@@ -508,11 +643,42 @@ describe PhonyRails do
         expect(model.phone_number).to eql('+31101234123')
       end
 
+      it 'should nilify attribute when it is set to nil' do
+        model = model_klass.new(phone_number: '+31-(0)10-1234123')
+        model.phone_number = nil
+        expect(model).to be_valid
+        expect(model.phone_number).to eql(nil)
+      end
+
+      it 'should nilify attribute when it is set to nil' do
+        model = ActiveRecordModel.create!(phone_number: '+31-(0)10-1234123')
+        model.phone_number = nil
+        expect(model).to be_valid
+        expect(model.save).to be(true)
+        expect(model.reload.phone_number).to eql(nil)
+      end
+
+      it 'should empty attribute when it is set to ""' do # Github issue #149
+        model = ActiveRecordModel.create!(phone_number: '+31-(0)10-1234123')
+        model.phone_number = ''
+        expect(model).to be_valid
+        expect(model.save).to be(true)
+        expect(model.reload.phone_number).to eql('')
+      end
+
       it 'should set a normalized version of an attribute using :as option' do
         model_klass.phony_normalize :phone_number, as: :phone_number_as_normalized
         model = model_klass.new(phone_number: '+31-(0)10-1234123')
         expect(model).to be_valid
         expect(model.phone_number_as_normalized).to eql('+31101234123')
+      end
+
+      it 'should nilify normalized version of an attribute when it is set to nil using :as option ' do
+        model_klass.phony_normalize :phone_number, as: :phone_number_as_normalized
+        model = model_klass.new(phone_number: '+31-(0)10-1234123', phone_number_as_normalized: '+31101234123')
+        model.phone_number = nil
+        expect(model).to be_valid
+        expect(model.phone_number_as_normalized).to eq(nil)
       end
 
       it 'should not add a + using :add_plus option' do
@@ -537,7 +703,69 @@ describe PhonyRails do
           dummy.valid?
         end).to raise_error(RuntimeError)
       end
+
+      it 'should accept a symbol when setting country_code options' do
+        model = model_klass.new(symboled_phone: '0606060606', country_code_attribute: 'FR')
+        expect(model).to be_valid
+        expect(model.symboled_phone).to eql('+33606060606')
+      end
+
+      context 'conditional normalization' do
+        context 'standalone methods' do
+          it 'should only normalize if the :if conditional is true' do
+            model_klass.phony_normalize :recipient, default_country_code: 'US', if: :use_phone?
+
+            sms_alarm = model_klass.new recipient: '222 333 4444', delivery_method: 'sms'
+            email_alarm = model_klass.new recipient: 'foo123@example.com', delivery_method: 'email'
+            expect(sms_alarm).to be_valid
+            expect(email_alarm).to be_valid
+            expect(sms_alarm.recipient).to eq('+12223334444')
+            expect(email_alarm.recipient).to eq('foo123@example.com')
+          end
+
+          it 'should only normalize if the :unless conditional is false' do
+            model_klass.phony_normalize :recipient, default_country_code: 'US', unless: :use_email?
+
+            sms_alarm = model_klass.new recipient: '222 333 4444', delivery_method: 'sms'
+            email_alarm = model_klass.new recipient: 'foo123@example.com', delivery_method: 'email'
+            expect(sms_alarm).to be_valid
+            expect(email_alarm).to be_valid
+            expect(sms_alarm.recipient).to eq('+12223334444')
+            expect(email_alarm.recipient).to eq('foo123@example.com')
+          end
+        end
+
+        context 'using lambdas' do
+          it 'should only normalize if the :if conditional is true' do
+            model_klass.phony_normalize :recipient, default_country_code: 'US', if: -> { delivery_method == 'sms' }
+
+            sms_alarm = model_klass.new recipient: '222 333 4444', delivery_method: 'sms'
+            email_alarm = model_klass.new recipient: 'foo123@example.com', delivery_method: 'email'
+            expect(sms_alarm).to be_valid
+            expect(email_alarm).to be_valid
+            expect(sms_alarm.recipient).to eq('+12223334444')
+            expect(email_alarm.recipient).to eq('foo123@example.com')
+          end
+
+          it 'should only normalize if the :unless conditional is false' do
+            model_klass.phony_normalize :recipient, default_country_code: 'US', unless: -> { delivery_method == 'email' }
+
+            sms_alarm = model_klass.new recipient: '222 333 4444', delivery_method: 'sms'
+            email_alarm = model_klass.new recipient: 'foo123@example.com', delivery_method: 'email'
+            expect(sms_alarm).to be_valid
+            expect(email_alarm).to be_valid
+            expect(sms_alarm.recipient).to eq('+12223334444')
+            expect(email_alarm.recipient).to eq('foo123@example.com')
+          end
+        end
+      end
     end
+  end
+
+  describe 'ActiveModel + ActiveModel::Validations::Callbacks' do
+    let(:model_klass) { ActiveModelModel }
+    let(:dummy_klass) { ActiveModelDummy }
+    it_behaves_like 'model with PhonyRails'
   end
 
   describe 'ActiveRecord' do
@@ -560,8 +788,8 @@ describe PhonyRails do
     end
 
     context 'when enforce_record_country is turned off' do
-      let(:model_klass)  { RelaxedActiveRecordModel }
-      let(:record)       { model_klass.new }
+      let(:model_klass) { RelaxedActiveRecordModel }
+      let(:record) { model_klass.new }
 
       before do
         record.phone_number = phone_number

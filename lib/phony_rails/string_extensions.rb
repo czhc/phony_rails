@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class String
   # Usage:
   #   "+31 (0)30 1234 123".phony_normalized # => '+31301234123'
@@ -24,11 +26,12 @@ class String
     raise ArgumentError, "Expected options to be a Hash, got #{options.inspect}" unless options.is_a?(Hash)
     options = options.dup
     normalize_country_code = options.delete(:normalize)
-    s = (normalize_country_code ? PhonyRails.normalize_number(self, default_country_code: normalize_country_code.to_s, add_plus: false) : gsub(/\D/, ''))
+    s, ext = PhonyRails.extract_extension(self)
+    s = (normalize_country_code ? PhonyRails.normalize_number(s, default_country_code: normalize_country_code.to_s, add_plus: false) : s.gsub(/\D/, ''))
     return if s.blank?
     return if options[:strict] && !Phony.plausible?(s)
-    Phony.format(s, options.reverse_merge(format: :national))
-  rescue
+    PhonyRails.format_extension(Phony.format(s, options.reverse_merge(format: :national)), ext)
+  rescue StandardError
     raise if options[:raise]
     s
   end

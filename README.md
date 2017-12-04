@@ -43,6 +43,26 @@ class SomeModel < ActiveRecord::Base
 
   # Creates method normalized_fax_number that returns the normalized version of fax_number
   phony_normalized_method :fax_number
+
+  # Conditionally normalizes the attribute
+  phony_normalize :recipient, default_country_code: 'US', if: -> { contact_method == 'phone_number' }
+end
+```
+
+#### ActiveModel (models without database)
+
+For Rails-like models without a database, add:
+
+```ruby
+class SomeModel
+  include ActiveModel::Model # we get AR-like attributes and validations
+  include ActiveModel::Validations::Callbacks # a dependency for normalization
+
+  # your attributes must be defined, they are not inherited from a DB table
+  attr_accessor :phone_number, :phone_number_as_normalized
+
+  # Once the model is set up, we have the same things as with ActiveRecord
+  phony_normalize :phone_number, default_country_code: 'US'
 end
 ```
 
@@ -79,6 +99,14 @@ PhonyRails.normalize_number('+4790909090', default_country_code: 'SE') # => '+47
 
 The country_code should always be a ISO 3166-1 alpha-2 (http://en.wikipedia.org/wiki/ISO_3166-1_alpha-2).
 
+#### Default for all models
+
+You can set the default_country_code for all models using:
+
+```ruby
+PhonyRails.default_country_code = "US"
+```
+
 ### Validation
 
 In your model use the Phony.plausible method to validate an attribute:
@@ -100,9 +128,9 @@ so we can use:
 
 ```ruby
 validates_plausible_phone :phone_number, presence: true
-validates_plausible_phone :phone_number, with: /^\+\d+/
-validates_plausible_phone :phone_number, without: /^\+\d+/
-validates_plausible_phone :phone_number, presence: true, with: /^\+\d+/
+validates_plausible_phone :phone_number, with: /\A\+\d+/
+validates_plausible_phone :phone_number, without: /\A\+\d+/
+validates_plausible_phone :phone_number, presence: true, with: /\A\+\d+/
 ```
 
 the i18n key is `:improbable_phone`. Languages supported by default: de, en, fr, it, ja, kh, nl, tr, ua and ru.
@@ -123,8 +151,10 @@ You can validate against the normalized input as opposed to the raw input:
 
 ```ruby
 phony_normalize :phone_number, as: :phone_number_normalized, default_country_code: 'US'
-validates_plausible_phone :phone_number, normalized_country_code: 'US'
+validates_plausible_phone :phone_number_normalized, presence: true, if: :phone_number?
 ```
+
+Validation supports phone numbers with extension, such as `+18181231234 x1234` or `'+1 (818)151-5483 #4312'` out-of-the-box.
 
 #### Allowing records country codes to not match phone number country codes
 
@@ -177,6 +207,15 @@ You can also easily normalize a phone number String:
 "(0)30 1234 123".phony_normalized # => '301234123'
 "(0)30 1234 123".phony_normalized(country_code: 'NL') # => '301234123'
 ```
+
+Extensions are supported (identified by "ext", "ex", "x", "xt", "#", or ":") and will show at the end of the number:
+
+```ruby
+"+31 (0)30 1234 123 x999".phony_normalized # => '31301234123 x999'
+"+31 (0)30 1234 123 ext999".phony_normalized # => '31301234123 x999'
+"+31 (0)30 1234 123 #999".phony_normalized # => '31301234123 x999'
+```
+
 
 ### Find by normalized number
 
